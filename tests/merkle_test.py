@@ -1,0 +1,56 @@
+from brownie import MerkleAirdrop, accounts, web3, MintableERC20
+from ..merkle import MerkleTree, LeafData
+import pytest
+import json
+
+import random
+TEST_SIZE = 100
+def get_random_address():
+    characters = [str(i) for i in list(range(0, 10)) + ["A", "B", "C", "D", "E", "F"]]
+    return web3.toChecksumAddress("0x" + "".join([random.choice(characters) for _ in range(0, 40)]))
+
+@pytest.fixture(scope="module")
+def token():
+    return MintableERC20.deploy("Token", "TKN", {'from': accounts[0]})
+
+@pytest.fixture(scope="module")
+def airdrop(token):
+    return MerkleAirdrop.deploy(token, {'from': accounts[0]})
+
+def kekkak(x):
+    x = x.replace("0x", "")
+    return web3.sha3(hexstr=x).hex()
+
+@pytest.fixture(scope="module")
+def leaves():
+    values = {get_random_address(): random.randint(0, 10**22) for _ in range(0, TEST_SIZE)}
+    return [LeafData(i, account, amount) for i, (account, amount) in enumerate(values.items())]
+
+@pytest.fixture(scope="module")
+def tree(token, airdrop, leaves):
+    user = accounts[0]
+    merkle_tree = MerkleTree(leaves, kekkak)
+    airdrop.setRoot(merkle_tree.hash, {'from': user})
+    token.mint(airdrop, 10**32, {'from': user})
+    return merkle_tree
+
+
+@pytest.fixture(autouse=True)
+def isolation(fn_isolation):
+    pass
+
+def test_merkle_offchain(token, airdrop, tree, leaves):
+    for leaf in leaves[TEST_SIZE//10:]:
+        proof = tree.get_proof(leaf.index)
+        tree.test_proof(leaf.hex_value, proof)
+
+def test_merkle(token, airdrop, tree, leaves):
+    for leaf in leaves[TEST_SIZE//10:]:
+        proof = tree.get_proof(leaf.index)
+        airdrop.claim(leaf.account, leaf.amount, proof, {'from': accounts[0]})
+        assert token.balanceOf(leaf.account) == leaf.amount
+
+def test_all_verify(token, airdrop, tree, leaves):
+    for leaf in leaves:
+        proof = tree.get_proof(leaf.index)
+        assert airdrop.testProof(leaf.account, leaf.amount, proof, {'from': accounts[0]})
